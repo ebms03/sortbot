@@ -1,5 +1,13 @@
 import numpy as np
 
+
+def transform_range(a):
+    midpoint = 90
+    true_range = 170
+    supposed_range = 180
+    return (a - midpoint) * true_range / supposed_range + midpoint
+
+
 z0 = 11
 
 l0 = 11.8

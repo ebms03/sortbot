@@ -19,8 +19,10 @@ def inverse_kinematics(target_x, target_y, target_z, target_phi):
 
     j2 = np.pi - gamma
     j3 = 3 * np.pi / 2 - j1 - j2
-    j4 = alpha_1 + target_phi
+    j4 = j0 + np.radians(target_phi)
 
-    res = np.degrees(np.array((j0, j1, j2, j3, j4)))
-    print(res)
-    return res
+    return np.degrees(np.array((j0, j1, j2, j3, j4)))
+
+
+if __name__ == "__main__":
+    print(inverse_kinematics(0, l1, z0 - l2 + l0, 90))

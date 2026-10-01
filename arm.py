@@ -1,5 +1,5 @@
 from ik import inverse_kinematics
-from arm_config import j_angle_offsets
+from arm_config import j_angle_offsets, transform_range
 
 import threading
 import time
@@ -8,7 +8,7 @@ import numpy as np
 import serial
 
 MOVE_TIMEOUT = 30
-HOME_AS = np.array((90, 0, 170, 0, 90, 90))
+HOME_AS = np.array((90, 0, 170, 0, 90, 40))
 
 
 class ArmStatus(IntEnum):
@@ -77,7 +77,7 @@ class ArmController:
     # command issue path (shared by move_to / move_joints)
     # ------------------------------------------------------------------ #
     def _send_move(self, j, a_deg):
-        a = int(round(a_deg + j_angle_offsets[j]))
+        a = int(round(transform_range(a_deg + j_angle_offsets[j])))
         cmd = f"m {j} {a}\n"
         if self.debug:
             print(">>", cmd.strip())
