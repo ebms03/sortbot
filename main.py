@@ -1,15 +1,26 @@
 import cv2
 import numpy as np
 import FreeSimpleGUI as sg
+import arm_actions
 
 from videostream import VideoStream
 from settings import load_settings, save_settings
-from image_processing import remove_bg, threshold, filter_small, morph, overlay
+from image_processing import (
+    find_contours,
+    remove_bg,
+    threshold,
+    filter_small,
+    morph,
+    overlay,
+)
+from transforms import assumed_resolution, pos_camera_to_robot, angle_camera_to_robot
 
 STREAM_URL = "https://192.168.0.192:8080/video"
 
 IMAGE_KEY = "IMAGE"
 STATUS_KEY = "STATUS"
+
+SORT = "Sort"
 
 CAPTURE_BG = "Capture background"
 CLEAR_ROI = "Clear selection"
@@ -28,7 +39,7 @@ PIPELINE = [
     (MORPH, morph, (FILTER_SMALL,)),
     (OVERLAY, overlay, (MORPH, ORIGINAL)),
 ]
-STEP_NAMES = [name for name, _, _ in PIPELINE]
+STEP_NAMES = [ORIGINAL] + [name for name, *_ in PIPELINE]
 
 MIN_ROI_SIZE = 3  # px; a smaller drag counts as a click and resets to full frame
 BG_FRAMES = 10  # frames averaged for the background
@@ -39,7 +50,10 @@ HINT = "Drag on the image to select an area, click to reset to full frame."
 def main():
     settings = load_settings()
     roi = RoiState()
+    arm_controller = None
     bg_capture = None
+    processed = None
+    sorting = None
     current_step = ORIGINAL
 
     window = sg.Window(
@@ -57,12 +71,21 @@ def main():
             current_step = event
         elif event == CLEAR_ROI:
             roi.roi = None
+        elif event == SORT:
+            sorting = SortingState(processed[MORPH])
+
+        if sorting:
+            done = sorting.update(arm_controller)
+            if done:
+                sorting = None
 
         ret, frame, frame_idx = stream.read()
         if not ret or frame is None:
             continue
 
         h, w = frame.shape[:2]
+        if (w, h) != assumed_resolution:
+            print(f"WRONG RESOLUTION GOT {(w, h)=} but {assumed_resolution=}")
         settings.roi = roi.clamp(w, h)
         work = settings.crop(frame)
 
@@ -72,7 +95,7 @@ def main():
 
         settings.update(values)
         processed = run_pipeline(work, settings)[current_step]
-        display = compose_display(frame, processed, settings.roi, roi.band)
+        display = compose_display(frame, processed, settings.roi, roi.bounds)
 
         window[IMAGE_KEY].update(data=encode(display))
         window[STATUS_KEY].update(status)
@@ -85,8 +108,6 @@ def main():
 
 
 class RoiState:
-    """Mouse drag on the image widget + the locked-in ROI (image pixel coords)."""
-
     def __init__(self):
         self.dragging = False
         self.start = None
@@ -94,7 +115,6 @@ class RoiState:
         self.roi = None  # (x1, y1, x2, y2) or None for full frame
 
     def clamp(self, w, h):
-        """Fit the ROI inside the frame; too-small selections reset to None."""
         if self.roi is None:
             return None
         x1, y1 = max(0, self.roi[0]), max(0, self.roi[1])
@@ -106,8 +126,7 @@ class RoiState:
         return self.roi
 
     @property
-    def band(self):
-        """Bounding box of the in-progress drag, or None."""
+    def bounds(self):
         if not self.dragging or self.start is None:
             return None
         (x1, y1), (x2, y2) = self.start, self.current
@@ -115,14 +134,11 @@ class RoiState:
 
 
 class BackgroundCapture:
-    """Averages the next BG_FRAMES distinct frames into the background."""
-
     def __init__(self, frame_idx):
         self.last_idx = frame_idx
         self.frames = []
 
     def feed(self, frame, frame_idx):
-        """Add the frame if it is new; True while still collecting."""
         if frame_idx == self.last_idx:  # same camera frame as last poll
             return True
         self.last_idx = frame_idx
@@ -131,6 +147,33 @@ class BackgroundCapture:
 
     def result(self):
         return np.round(np.mean(self.frames, axis=0, dtype=np.float32)).astype(np.uint8)
+
+
+class SortingState:
+    def __init__(self, contours_from):
+        self.items = [
+            (cv2.minAreaRect(cnt), cv2.contourArea(cnt))
+            for cnt in find_contours(contours_from)
+        ]
+        self.actions = []
+        for rect, _area in self.items:
+            (cx, cy), _, ca = rect
+            rx, ry = pos_camera_to_robot(cx, cy)
+            ra = angle_camera_to_robot(ca)
+            self.actions.extend(arm_actions.pick_up_at(rx, ry, ra))
+            self.actions.extend(arm_actions.drow_off_at(10, 20, 90))
+
+    def update(self, arm):
+        if arm is None:
+            print("arm is None, dumping items and finishing early")
+            print(*self.items, sep="\n")
+            return True
+        if not self.actions:
+            return True
+        if not arm.is_moving():
+            action = self.actions.pop(0)
+            action(arm)
+        return False
 
 
 # ------------------------------------------------------------- UI helpers
@@ -160,11 +203,11 @@ def build_layout(settings):
             ]
             for k, v in settings.items()
         ],
+        [sg.Button(SORT, size=(10, 1))],
     ]
 
 
 def bind_mouse_selection(window, key, roi):
-    """Mouse events on the tk widget under sg.Image; coords are image pixels."""
     widget = window[key].Widget
     widget.configure(cursor="crosshair")
 
@@ -197,7 +240,6 @@ def bind_mouse_selection(window, key, roi):
 
 
 def run_pipeline(frame, settings):
-    """Run the full chain, return {step name: image}."""
     ctx = {ORIGINAL: frame}
     for name, fn, inputs in PIPELINE:
         ctx[name] = fn(*(ctx[n] for n in inputs), settings)
@@ -205,7 +247,6 @@ def run_pipeline(frame, settings):
 
 
 def compose_display(frame, processed, roi, band):
-    """Paste the processed crop back into the full frame and draw the selection."""
     out = processed if roi is None else frame.copy()
     if roi is not None:
         x1, y1, x2, y2 = roi
@@ -226,7 +267,6 @@ def encode(img):
 
 
 def advance_background(event, bg_capture, settings, frame, frame_idx):
-    """Background-averaging state machine; returns (state, status text)."""
     if event == CAPTURE_BG:  # pressing again mid-capture restarts it
         return BackgroundCapture(frame_idx), f"Background 0/{BG_FRAMES}"
     if bg_capture is not None:

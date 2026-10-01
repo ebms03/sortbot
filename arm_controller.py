@@ -1,5 +1,12 @@
 from ik import inverse_kinematics
-from arm_config import j_angle_offsets, transform_range
+from arm_config import (
+    j_angle_offsets,
+    transform_range,
+    HOME_ANGLES,
+    J_GRIPPER,
+    GRIPPER_CLOSE,
+    GRIPPER_OPEN,
+)
 
 import threading
 import time
@@ -8,7 +15,6 @@ import numpy as np
 import serial
 
 MOVE_TIMEOUT = 30
-HOME_AS = np.array((90, 0, 170, 0, 90, 40))
 
 
 class ArmStatus(IntEnum):
@@ -106,7 +112,7 @@ class ArmController:
     # ------------------------------------------------------------------ #
 
     def cmd_raw(self, j, a_deg):
-        if not (0 <= j < 5):
+        if not (0 <= j <= 5):
             return ArmStatus.BAD_ARG
         try:
             with self._lock:
@@ -122,7 +128,7 @@ class ArmController:
         return ArmStatus.OK
 
     def home(self):
-        return self.move_joints(HOME_AS)
+        return self.move_joints(HOME_ANGLES)
 
     def move_to(self, x, y, z, phi):
         if not self._alive:
@@ -149,15 +155,12 @@ class ArmController:
                 return False
             return True
 
-    def wait_done(self, timeout=None):
-        """Optional blocking helper; polls is_moving() every 10 ms."""
-        t0 = time.monotonic()
+    def open_gripper(self):
+        self.cmd_raw(J_GRIPPER, GRIPPER_OPEN)
 
-        while self.is_moving():
-            if timeout is not None and time.monotonic() - t0 > timeout:
-                return False
-            time.sleep(0.01)
-        return True
+    def close_gripper(self):
+        self.cmd_raw(J_GRIPPER, GRIPPER_CLOSE)
+
 
     def close(self):
         self._running = False
@@ -206,7 +209,7 @@ def interactive(arm: ArmController):
             elif cmd == "s":
                 print("moving" if arm.is_moving() else "idle")
             else:
-                print("unknown command:", cmd, "(try 'help')")
+                print("unknown command:", cmd)
         except (ValueError, IndexError):
             print("bad arguments")
 

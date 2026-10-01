@@ -1,5 +1,10 @@
 import numpy as np
 
+J_GRIPPER = 5
+GRIPPER_CLOSE = 0
+GRIPPER_OPEN = 50
+HOME_ANGLES = np.array((90, 0, 170, 0, 90, GRIPPER_OPEN))
+
 
 def transform_range(a):
     midpoint = 90
@@ -8,6 +13,7 @@ def transform_range(a):
     return (a - midpoint) * true_range / supposed_range + midpoint
 
 
+y0 = 3
 z0 = 11
 
 tool_horizontal_offset = 3

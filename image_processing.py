@@ -14,13 +14,14 @@ def blur(x, settings):
 def gray(x, _settings):
     return cv2.cvtColor(x, cv2.COLOR_BGR2GRAY)
 
+
 def remove_bg(x, settings):
     gray_x = gray(x, settings)
     if settings.bg is None:
         return gray_x
-    bg = settings.crop(settings.bg)         
+    bg = settings.crop(settings.bg)
     if bg.shape[:2] != x.shape[:2]:
-        return gray_x                     
+        return gray_x
     diff = cv2.absdiff(blur(x, settings), blur(bg, settings))
     return gray(diff, settings)
 
@@ -49,10 +50,15 @@ def morph(x, settings):
 
 def overlay(contours_from, draw_onto, _settings):
     out = draw_onto.copy()
+    contours = find_contours(contours_from)
+    for cnt in contours:
+        box = np.intp(cv2.boxPoints(cv2.minAreaRect(cnt)))
+        cv2.drawContours(out, [box], 0, (0, 255, 0), 2)
+    return out
+
+
+def find_contours(contours_from):
     contours, _ = cv2.findContours(
         contours_from, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
     )
-    for cnt in contours:
-        box = np.intp(cv2.boxPoints(cv2.minAreaRect(cnt)))   
-        cv2.drawContours(out, [box], 0, (0, 255, 0), 2)
-    return out
+    return contours
