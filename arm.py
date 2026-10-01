@@ -1,5 +1,5 @@
 from ik import inverse_kinematics
-
+from arm_config import j_angle_offsets
 
 import threading
 import time
@@ -77,7 +77,7 @@ class ArmController:
     # command issue path (shared by move_to / move_joints)
     # ------------------------------------------------------------------ #
     def _send_move(self, j, a_deg):
-        a = int(round(a_deg))
+        a = int(round(a_deg + j_angle_offsets[j]))
         cmd = f"m {j} {a}\n"
         if self.debug:
             print(">>", cmd.strip())
@@ -189,14 +189,12 @@ def interactive(arm: ArmController):
                 if st != ArmStatus.OK:
                     print("m ->", st.name)
             elif cmd == "ik":
-                if len(parts) == 4:
-                    st = arm.move_to(*map(float, parts[1:4]))
+                if len(parts) == 5:
+                    st = arm.move_to(*map(float, parts[1:5]))
                 else:
-                    print("usage: ik x y z [vx vy vz]")
+                    print("usage: ik x y z phi")
                     continue
                 print("ik ->", st.name)
-                if st == ArmStatus.OK:
-                    print("   joints:", arm.joint_angles_str())
             elif cmd in ("h", "home"):
                 print("home ->", arm.home().name)
             elif cmd == "w":
@@ -216,7 +214,7 @@ def interactive(arm: ArmController):
 if __name__ == "__main__":
     import sys
 
-    PORT, BAUD = "/dev/ttyUSB0", 115200  # or "COM3"
+    PORT, BAUD = "/dev/ttyACM0", 115200  # or "COM3"
     if len(sys.argv) > 1:
         PORT = sys.argv[1]
     arm = ArmController(PORT, BAUD)

@@ -1,14 +1,4 @@
-import numpy as np
-
-z0 = 11
-
-l0 = 11.8
-l1 = 16.7
-l2 = 10.5
-
-l_z_offset = 2.85
-l0_angle_offset = np.asin(l_z_offset / l0)
-l1_angle_offset = np.asin(l_z_offset / l1)
+from arm_config import *
 
 
 def inverse_kinematics(target_x, target_y, target_z, target_phi):
@@ -24,13 +14,13 @@ def inverse_kinematics(target_x, target_y, target_z, target_phi):
         return None
     # sin(alpha)/l1 == sin(gamma)/d == sin(beta)/l0
     alpha = np.asin(l1 * np.sin(gamma) / d)
-    alpha_1 = np.sin(y / d)
-    alpha_2 = gamma - j1
-
+    alpha_1 = np.asin(y / d)
     j1 = np.pi - alpha - alpha_1
+
     j2 = np.pi - gamma
-    j3 = np.pi/2 + alpha_2
-    
+    j3 = 3 * np.pi / 2 - j1 - j2
     j4 = alpha_1 + target_phi
-    
-    return j0, j1 - l0_angle_offset, j2 - l1_angle_offset, j3, j4
+
+    res = np.degrees(np.array((j0, j1, j2, j3, j4)))
+    print(res)
+    return res
