@@ -62,3 +62,17 @@ def find_contours(contours_from):
         contours_from, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
     )
     return contours
+
+
+def fix_rect_angle(rect, roi):
+    (x, y), (w, h), a = rect
+    if roi:
+        (dx, dy), _ = roi.bounds
+        x += dx
+        y += dy
+    # angle of longer edge
+    if w < h:
+        a += 90
+    if a < 0:
+        a = 180 - a
+    return (x, y), a

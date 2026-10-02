@@ -23,7 +23,7 @@ def pos_camera_to_robot(cx, cy):
 
 # x and y axes are aligned but y is flipped
 def angle_camera_to_world(ca):
-    return -ca
+    return 180-ca
 
 
 # x and y axes are aligned

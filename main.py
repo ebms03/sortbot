@@ -7,6 +7,7 @@ from videostream import VideoStream
 from settings import load_settings, save_settings
 from image_processing import (
     find_contours,
+    fix_rect_angle,
     remove_bg,
     threshold,
     filter_small,
@@ -53,6 +54,7 @@ def main():
     arm_controller = None
     bg_capture = None
     processed = None
+    pipeline_result = None
     sorting = None
     current_step = ORIGINAL
 
@@ -72,7 +74,7 @@ def main():
         elif event == CLEAR_ROI:
             roi.roi = None
         elif event == SORT:
-            sorting = SortingState(processed[MORPH])
+            sorting = SortingState(pipeline_result[MORPH], roi.roi)
 
         if sorting:
             done = sorting.update(arm_controller)
@@ -94,8 +96,9 @@ def main():
         )
 
         settings.update(values)
-        processed = run_pipeline(work, settings)[current_step]
-        display = compose_display(frame, processed, settings.roi, roi.bounds)
+        pipeline_result = run_pipeline(work, settings)
+        processed = pipeline_result[current_step]
+        display = compose_display(frame, processed, settings.roi, roi.band())
 
         window[IMAGE_KEY].update(data=encode(display))
         window[STATUS_KEY].update(status)
@@ -125,8 +128,7 @@ class RoiState:
             self.roi = (x1, y1, x2, y2)
         return self.roi
 
-    @property
-    def bounds(self):
+    def band(self):
         if not self.dragging or self.start is None:
             return None
         (x1, y1), (x2, y2) = self.start, self.current
@@ -150,14 +152,29 @@ class BackgroundCapture:
 
 
 class SortingState:
-    def __init__(self, contours_from):
+    class Item:
+        def __init__(self, cnt, roi):
+            self.area = cv2.contourArea(cnt)
+            (self.x, self.y), (w, h), self.angle = cv2.minAreaRect(cnt)
+            if w < h:
+                self.angle += 90
+            if self.angle < 0:
+                self.angle = 180 + self.angle
+            if roi:
+                dx, dy, *_ = roi
+                self.x += dx
+                self.y += dy
+
+        def __repr__(self):
+            return f"Item([{self.x},{self.y},{self.angle}],{self.area})"
+
+    def __init__(self, contours_from, roi):
         self.items = [
-            (cv2.minAreaRect(cnt), cv2.contourArea(cnt))
-            for cnt in find_contours(contours_from)
+            SortingState.Item(cnt, roi) for cnt in find_contours(contours_from)
         ]
         self.actions = []
-        for rect, _area in self.items:
-            (cx, cy), _, ca = rect
+        for item in self.items:
+            cx, cy, ca = item.x, item.y, item.angle
             rx, ry = pos_camera_to_robot(cx, cy)
             ra = angle_camera_to_robot(ca)
             self.actions.extend(arm_actions.pick_up_at(rx, ry, ra))
