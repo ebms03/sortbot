@@ -6,14 +6,6 @@ GRIPPER_OPEN = 130
 HOME_ANGLES = np.array((90, 30, 170, 0, 90, GRIPPER_OPEN))
 
 
-def transform_range(a):
-    midpoint = 90
-    true_range = 170
-    supposed_range = 180
-    return a
-    return (a - midpoint) * true_range / supposed_range + midpoint
-
-
 y0 = 3
 z0 = 13
 

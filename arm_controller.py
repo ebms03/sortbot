@@ -133,7 +133,7 @@ class ArmController:
         # Transform + validate BEFORE touching the bus (all-or-nothing).
         raw = []
         for j in range(5):
-            a = int(round(transform_range(j_angle_transforms[j](as_deg[j]))))
+            a = int(round(j_angle_transforms[j](as_deg[j])))
             if not (0 <= a <= 180):
                 return ArmStatus.OUT_OF_REACH  # firmware would have said "err angle"
             raw.append(a)

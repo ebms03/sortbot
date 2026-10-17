@@ -67,9 +67,7 @@ def main():
     sorting = None
     current_step = ORIGINAL
 
-    window = sg.Window(
-        "", build_layout(settings), location=(800, 400), finalize=True
-    )
+    window = sg.Window("", build_layout(settings), location=(800, 400), finalize=True)
     bind_mouse_selection(window, IMAGE_KEY, roi)
     stream = VideoStream(STREAM_URL)
 
@@ -196,14 +194,14 @@ class SortingState:
             SortingState.Item(cnt, roi) for cnt in find_contours(contours_from)
         ]
         self.actions = []
-        for item in self.items:
+        for item, large in zip(self.items, SortingState.classify(self.items)):
             cx, cy, ca = item.x, item.y, item.angle
             rx, ry = pos_camera_to_robot(cx, cy)
             ra = angle_camera_to_robot(ca)
             print(cx, cy, ca)
             print(rx, ry, ra)
             self.actions.extend(arm_actions.pick_up_at(rx, ry, ra))
-            self.actions.extend(arm_actions.drow_off_at(10 if item.area > 1000 else -10, 10, 90))
+            self.actions.extend(arm_actions.drow_off_at(10 if large else -10, 10, 90))
         self.actions.extend(arm_actions.home())
 
     def update(self, arm):
@@ -218,6 +216,16 @@ class SortingState:
             action(arm)
         return False
 
+    @staticmethod
+    def classify(items):
+        smallest = min(items, key=lambda i: i.area)
+        largest = max(items, key=lambda i: i.area)
+        # only one size
+        if smallest * 1.2 > largest:
+            return [False for _ in items]
+        midpoint = (smallest + largest) / 2
+        return [item.area > midpoint for item in items]
+
 
 # ------------------------------------------------------------- UI helpers
 
@@ -226,7 +234,6 @@ def build_layout(settings):
     return [
         [sg.Image(filename="", key=IMAGE_KEY)],
         [
-            
             sg.Button(HOME, size=(10, 1)),
             sg.Button(CAPTURE_BG, size=(10, 1)),
             sg.Text("   "),

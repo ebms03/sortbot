@@ -27,9 +27,8 @@ class Settings:
             MORPH_SIZE: Setting(4, (0, 20)),
             MIN_AREA: Setting(10, (0, 100)),
         }
-        self.bg = None      
+        self.bg = None
         self.roi = None  # (x1, y1, x2, y2) in full-frame pixels, None = full frame
-
 
     def values(self):
         return {k: v.value for k, v in self._settings.items()}
