@@ -1,6 +1,6 @@
 from ik import inverse_kinematics
 from arm_config import (
-    j_angle_offsets,
+    j_angle_transforms,
     transform_range,
     HOME_ANGLES,
     J_GRIPPER,
@@ -41,6 +41,12 @@ class ArmController:
         self._reader_thread = threading.Thread(target=self._reader_loop, daemon=True)
         self._reader_thread.start()
 
+        self._ready = threading.Event()
+        self._last = [None] * 6  # last raw value sent per joint
+
+    def wait_ready(self, timeout=1.0):
+        return self._ready.wait(timeout)  # False = no reset seen; proceed anyway
+
     # ------------------------------------------------------------------ #
     # background reader thread: consumes "done j", clears pending set
     # ------------------------------------------------------------------ #
@@ -64,7 +70,11 @@ class ArmController:
         if self.debug and line:
             print("<<", line)
         parts = line.split()
-        if len(parts) == 2 and parts[0].lower() == "done":
+        if not parts:
+            return
+        head = parts[0].lower()
+
+        if head == "done" and len(parts) == 2:
             try:
                 j = int(parts[1])
             except ValueError:
@@ -72,53 +82,100 @@ class ArmController:
             with self._lock:
                 was_pending = j in self._pending
                 self._pending.discard(j)
-            if was_pending and self.on_done:  # echo live "done" messages
+            if was_pending and self.on_done:
                 try:
                     self.on_done(j)
                 except Exception:
                     pass
-        # any other firmware output is ignored
 
-    # ------------------------------------------------------------------ #
-    # command issue path (shared by move_to / move_joints)
-    # ------------------------------------------------------------------ #
-    def _send_move(self, j, a_deg):
-        a = int(round(transform_range(a_deg + j_angle_offsets[j])))
+        elif head == "err":
+            # Firmware refused a command -> that joint will NEVER report done.
+            # Requires firmware to print the joint index (patch below).
+            print("firmware error:", line)
+            if len(parts) == 3:
+                try:
+                    j = int(parts[2])
+                except ValueError:
+                    return
+                if 0 <= j <= 5:
+                    with self._lock:
+                        self._pending.discard(j)
+
+        elif head == "ready":
+            # Firmware (re)booted: everything in flight is void, resync.
+            with self._lock:
+                self._pending.clear()
+                self._last = [None] * 6
+            self._ready.set()
+            if self.on_reset:
+                try:
+                    self.on_reset()
+                except Exception:
+                    pass
+
+    def _cull_stale_locked(self):
+        if (
+            self._pending
+            and MOVE_TIMEOUT is not None
+            and time.monotonic() - self._move_t0 > MOVE_TIMEOUT
+        ):
+            print("warning: timed out waiting for 'done', clearing state")
+            self._pending.clear()
+            self._last = [None] * 6  # our idea of joint state is now suspect
+
+    def _send_raw(self, j, a):
         cmd = f"m {j} {a}\n"
         if self.debug:
             print(">>", cmd.strip())
         self._ser.write(cmd.encode("ascii"))
 
     def _issue(self, as_deg):
-        """Send commands for changed joints only. Returns ArmStatus."""
+        # Transform + validate BEFORE touching the bus (all-or-nothing).
+        raw = []
+        for j in range(5):
+            a = int(round(transform_range(j_angle_transforms[j](as_deg[j]))))
+            if not (0 <= a <= 180):
+                return ArmStatus.OUT_OF_REACH  # firmware would have said "err angle"
+            raw.append(a)
+
         with self._lock:
             if not self._alive:
                 return ArmStatus.SERIAL_ERROR
+            self._cull_stale_locked()  # <-- BUSY now self-heals
             if self._pending:
                 return ArmStatus.BUSY
             try:
+                sent = False
                 for j in range(5):
-                    self._send_move(j, as_deg[j])
+                    if self._last[j] == raw[j]:
+                        continue  # actually send *changed joints only*
+                    self._send_raw(j, raw[j])
+                    self._last[j] = raw[j]
                     self._pending.add(j)
+                    sent = True
+                if sent:
+                    self._move_t0 = time.monotonic()
             except (serial.SerialException, OSError):
                 self._alive = False
                 return ArmStatus.SERIAL_ERROR
-            if self._pending:
-                self._move_t0 = time.monotonic()
-            return ArmStatus.OK
+        return ArmStatus.OK
 
     # ------------------------------------------------------------------ #
     # public API
     # ------------------------------------------------------------------ #
 
-    def cmd_raw(self, j, a_deg):
+    def cmd_move(self, j, a_deg):
         if not (0 <= j <= 5):
+            return ArmStatus.BAD_ARG
+        a = int(round(transform_range(j_angle_transforms[j](a_deg))))
+        if not (0 <= a <= 180):
             return ArmStatus.BAD_ARG
         try:
             with self._lock:
                 if not self._alive:
                     return ArmStatus.SERIAL_ERROR
-                self._send_move(j, a_deg)
+                self._send_raw(j, a)
+                self._last[j] = a
                 self._pending.add(j)
                 if len(self._pending) == 1:
                     self._move_t0 = time.monotonic()
@@ -142,25 +199,17 @@ class ArmController:
         return self._issue(as_deg)
 
     def is_moving(self):
-        """True until every issued joint has reported 'done'."""
         with self._lock:
             if not self._alive or not self._pending:
                 return False
-            if (
-                MOVE_TIMEOUT is not None
-                and time.monotonic() - self._move_t0 > MOVE_TIMEOUT
-            ):
-                print("warning: timed out waiting for 'done', clearing state")
-                self._pending.clear()
-                return False
-            return True
+            self._cull_stale_locked()
+            return bool(self._pending)
 
     def open_gripper(self):
-        self.cmd_raw(J_GRIPPER, GRIPPER_OPEN)
+        self.cmd_move(J_GRIPPER, GRIPPER_OPEN)
 
     def close_gripper(self):
-        self.cmd_raw(J_GRIPPER, GRIPPER_CLOSE)
-
+        self.cmd_move(J_GRIPPER, GRIPPER_CLOSE)
 
     def close(self):
         self._running = False
@@ -188,7 +237,7 @@ def interactive(arm: ArmController):
             if cmd in ("exit", "quit"):
                 break
             elif cmd == "m":
-                st = arm.cmd_raw(int(parts[1]), float(parts[2]))
+                st = arm.cmd_move(int(parts[1]), float(parts[2]))
                 if st != ArmStatus.OK:
                     print("m ->", st.name)
             elif cmd == "ik":

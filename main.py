@@ -3,6 +3,7 @@ import numpy as np
 import FreeSimpleGUI as sg
 import arm_actions
 
+from arm_controller import ArmController
 from videostream import VideoStream
 from settings import load_settings, save_settings
 from image_processing import (
@@ -23,6 +24,7 @@ STATUS_KEY = "STATUS"
 
 SORT = "Sort"
 
+HOME = "Home"
 CAPTURE_BG = "Capture background"
 CLEAR_ROI = "Clear selection"
 
@@ -49,9 +51,16 @@ HINT = "Drag on the image to select an area, click to reset to full frame."
 
 
 def main():
+
+    PORT, BAUD = "/dev/ttyACM0", 115200
     settings = load_settings()
     roi = RoiState()
-    arm_controller = None
+    try:
+        arm_controller = ArmController(PORT, BAUD)
+        arm_controller.wait_ready()
+    except:
+        print("Could not create arm controller")
+        arm_controller = None
     bg_capture = None
     processed = None
     pipeline_result = None
@@ -59,7 +68,7 @@ def main():
     current_step = ORIGINAL
 
     window = sg.Window(
-        "Stream processor", build_layout(settings), location=(800, 400), finalize=True
+        "", build_layout(settings), location=(800, 400), finalize=True
     )
     bind_mouse_selection(window, IMAGE_KEY, roi)
     stream = VideoStream(STREAM_URL)
@@ -71,6 +80,8 @@ def main():
             break
         if event in STEP_NAMES:
             current_step = event
+        if event == HOME and arm_controller is not None:
+            arm_controller.home()
         elif event == CLEAR_ROI:
             roi.roi = None
         elif event == SORT:
@@ -99,6 +110,18 @@ def main():
         pipeline_result = run_pipeline(work, settings)
         processed = pipeline_result[current_step]
         display = compose_display(frame, processed, settings.roi, roi.band())
+        display = cv2.line(
+            display,
+            (assumed_resolution[0] // 2, 0),
+            (assumed_resolution[0] // 2, assumed_resolution[1]),
+            (0, 255, 0),
+        )
+        display = cv2.line(
+            display,
+            (0, assumed_resolution[1] // 2),
+            (assumed_resolution[0], assumed_resolution[1] // 2),
+            (0, 255, 0),
+        )
 
         window[IMAGE_KEY].update(data=encode(display))
         window[STATUS_KEY].update(status)
@@ -177,8 +200,11 @@ class SortingState:
             cx, cy, ca = item.x, item.y, item.angle
             rx, ry = pos_camera_to_robot(cx, cy)
             ra = angle_camera_to_robot(ca)
+            print(cx, cy, ca)
+            print(rx, ry, ra)
             self.actions.extend(arm_actions.pick_up_at(rx, ry, ra))
-            self.actions.extend(arm_actions.drow_off_at(10, 20, 90))
+            self.actions.extend(arm_actions.drow_off_at(10 if item.area > 1000 else -10, 10, 90))
+        self.actions.extend(arm_actions.home())
 
     def update(self, arm):
         if arm is None:
@@ -200,6 +226,8 @@ def build_layout(settings):
     return [
         [sg.Image(filename="", key=IMAGE_KEY)],
         [
+            
+            sg.Button(HOME, size=(10, 1)),
             sg.Button(CAPTURE_BG, size=(10, 1)),
             sg.Text("   "),
             *[sg.Button(name, size=(10, 1)) for name in STEP_NAMES],

@@ -3,8 +3,8 @@ from arm_config import *
 
 def inverse_kinematics(target_x, target_y, target_z, target_phi):
     # set offset "beheind tool" so gripper extends to target
-    offset_x = target_x #- np.cos(np.radians(target_phi)) * tool_horizontal_offset
-    offset_y = target_y #- np.sin(np.radians(target_phi)) * tool_horizontal_offset
+    offset_x = target_x - np.cos(np.radians(target_phi)) * tool_horizontal_offset
+    offset_y = target_y - np.sin(np.radians(target_phi)) * tool_horizontal_offset
 
     # "yaw"
     j0 = np.atan2(offset_y, offset_x)

@@ -14,7 +14,7 @@ def pos_camera_to_world(cx, cy):
 
 # robot (0, 0) is j0 pivot, which is y0 behind the "front of the base"
 def pos_world_to_robot(wx, wy):
-    return wx, wy - y0
+    return wx, wy + y0 + _px_to_cm * assumed_resolution[1] / 2
 
 
 def pos_camera_to_robot(cx, cy):
@@ -23,7 +23,7 @@ def pos_camera_to_robot(cx, cy):
 
 # x and y axes are aligned but y is flipped
 def angle_camera_to_world(ca):
-    return 180-ca
+    return ca
 
 
 # x and y axes are aligned
